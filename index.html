@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="ka">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>React შიგნიდან — ავაწყოთ საკუთარი React</title>
+  <meta name="description" content="ინტერაქტიული გაკვეთილი: ავაწყოთ საკუთარი React ნულიდან, vanilla JavaScript-ით — JSX compiler, virtual DOM, reconciliation, hooks და key.">
+  <meta name="theme-color" content="#0B1B3A">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230B1B3A'/%3E%3Cpath d='M9 22V10h6.5a3.5 3.5 0 0 1 0 7H9m6.5 0L21 22' fill='none' stroke='%23F6F7F9' stroke-width='2.4'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/lab.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="top">
+      <a class="brand" href="#/0" aria-label="დასაწყისი"><span class="brand-mark mono">R</span><span>React <b>შიგნიდან</b></span></a>
+      <nav class="progress" id="progress" aria-label="თავები"></nav>
+      <span class="top-count mono" id="count"></span>
+    </header>
+    <main class="stage" id="stage" aria-live="polite"></main>
+  </div>
+  <noscript><p style="padding:2rem;font-family:sans-serif">ეს გაკვეთილი JavaScript-ზეა აწყობილი — ჩართეთ JavaScript.</p></noscript>
+
+  <!--
+    The code on this page is not a picture of code: every block below is read with textContent and
+    executed (new Function) by the labs. What students read is exactly what runs.
+  -->
+
+  <!-- 01 · the vanilla starting point -->
+  <script type="text/x-source" id="src-vanilla">
+// vanilla: ყოველ ცვლილებაზე — მთელი HTML თავიდან
+const state = { cart: 0, query: '' };
+
+function render() {
+  const q = state.query.toLowerCase();
+  const list = PRODUCTS.filter((p) => p.name.toLowerCase().includes(q));
+  app.innerHTML = `
+    <header class="bar">
+      <b class="brand">Trattoria</b>
+      <span class="cart">Cart <i class="badge">${state.cart}</i></span>
+    </header>
+    <input class="search" placeholder="ძიება…" value="${state.query}">
+    <ul class="grid">
+      ${list.map((p) => `
+        <li class="card">
+          <div class="pizza" style="${p.art}"></div>
+          <h3>${p.name}</h3>
+          <p class="row">
+            <strong>$${p.price.toFixed(2)}</strong>
+            <button data-add="${p.id}">Add</button>
+          </p>
+        </li>`).join('')}
+    </ul>`;
+}
+
+app.addEventListener('input', (e) => {
+  state.query = e.target.value;
+  render();                       // focus?
+});
+
+app.addEventListener('click', (e) => {
+  if (!e.target.matches('[data-add]')) return;
+  state.cart += 1;
+  render();                       // ყველაფერი — თავიდან
+});
+
+render();
+  </script>
+
+  <!-- mini-react.js, assembled from these blocks chapter by chapter (see js/lib.js) -->
+  <script type="text/x-source" id="lib-base">
+const TEXT = '#text';
+  </script>
+
+  <script type="text/x-source" id="lib-h@2">
+// ── 1. JSX → ობიექტები (virtual DOM) ───────────
+function h(type, props, ...children) {
+  return {
+    type,
+    props: props || {},
+    children: children
+      .flat(Infinity)
+      .filter((c) => c != null && c !== false && c !== true)
+      .map(toNode),
+  };
+}
+  </script>
+
+  <script type="text/x-source" id="lib-h@7">
+// ── 1. JSX → ობიექტები (virtual DOM) ───────────
+function h(type, props, ...children) {
+  return {
+    type,
+    props: props || {},
+    key: props ? props.key : undefined,
+    children: children
+      .flat(Infinity)
+      .filter((c) => c != null && c !== false && c !== true)
+      .map(toNode),
+  };
+}
+  </script>
+
+  <script type="text/x-source" id="lib-toNode">
+function toNode(c) {                        // "ტექსტი" → ტექსტის კვანძი
+  if (typeof c === 'object') return c;
+  return {
+    type: TEXT,
+    props: { nodeValue: String(c) },
+    children: [],
+  };
+}
+  </script>
+
+  <script type="text/x-source" id="lib-dom@3">
+// ── 2. ობიექტები → ნამდვილი DOM ────────────────
+function createDom(v) {
+  if (typeof v.type === 'function') {       // კომპონენტი
+    v.dom = createDom(renderComponent(v));
+    return v.dom;
+  }
+  v.dom = v.type === TEXT
+    ? document.createTextNode(v.props.nodeValue)
+    : document.createElement(v.type);
+  setProps(v.dom, {}, v.props);
+  v.children.forEach((c) => v.dom.appendChild(createDom(c)));
+  return v.dom;
+}
+
+function setProps(dom, prev, next) {
+  for (const k in prev) {
+    if (!(k in next)) setProp(dom, k, prev[k], null);
+  }
+  for (const k in next) {
+    if (prev[k] !== next[k]) setProp(dom, k, prev[k], next[k]);
+  }
+}
+
+function setProp(dom, k, old, value) {
+  if (k === 'key' || k === 'nodeValue') return;
+  if (k.startsWith('on')) {                 // onClick → "click"
+    const type = k.slice(2).toLowerCase();
+    if (old) dom.removeEventListener(type, old);
+    if (value) dom.addEventListener(type, value);
+  } else if (k in dom) {
+    dom[k] = value ?? '';                   // className, value, style…
+  } else if (value == null || value === false) {
+    dom.removeAttribute(k);
+  } else {
+    dom.setAttribute(k, value);             // data-*, aria-*
+  }
+}
+  </script>
+
+  <script type="text/x-source" id="lib-component@3">
+function renderComponent(v) {               // კომპონენტი = ფუნქცია → ხე
+  v.rendered = toNode(v.type({ ...v.props, children: v.children }));
+  return v.rendered;
+}
+  </script>
+
+  <script type="text/x-source" id="lib-component@6">
+function renderComponent(v, old) {          // ფუნქცია + მისი ინსტანსი
+  v.instance = old ? old.instance : { hooks: [] };
+  v.instance.cursor = 0;
+  current = v.instance;
+  v.rendered = toNode(v.type({ ...v.props, children: v.children }));
+  current = null;
+  return v.rendered;
+}
+  </script>
+
+  <script type="text/x-source" id="lib-render@3">
+function render(v, container) {             // ხე → კონტეინერში
+  container.replaceChildren(createDom(v));
+}
+  </script>
+
+  <script type="text/x-source" id="lib-state@4">
+// ── 3. state → ახალი ხე → ეკრანი ──────────────
+let root = null;
+
+function mount(App, container) {
+  root = { App, container };
+  rerender();
+}
+
+function rerender() {                       // ყველაფერი — თავიდან
+  root.v = h(root.App);
+  render(root.v, root.container);
+}
+  </script>
+
+  <script type="text/x-source" id="lib-state@5">
+// ── 3. state → ახალი ხე → ეკრანი ──────────────
+let root = null;
+
+function mount(App, container) {
+  root = { App, container, v: h(App) };
+  render(root.v, container);
+}
+
+function rerender() {                       // ძველი ხე vs ახალი ხე
+  const next = h(root.App);
+  patch(root.container, root.v, next);
+  root.v = next;
+}
+  </script>
+
+  <script type="text/x-source" id="lib-patch@5">
+// ── 4. reconciliation: მხოლოდ განსხვავება ──────
+function patch(parent, old, v) {
+  if (old.type !== v.type) {                // სხვა ტიპი → ვცვლით
+    parent.replaceChild(createDom(v), old.dom);
+    return;
+  }
+  if (typeof v.type === 'function') {       // კომპონენტი → მისი ხე
+    patch(parent, old.rendered, renderComponent(v));
+    v.dom = v.rendered.dom;
+    return;
+  }
+  v.dom = old.dom;                          // იგივე ტიპი → კვანძი რჩება
+  if (v.type === TEXT) {
+    if (old.props.nodeValue !== v.props.nodeValue) {
+      v.dom.nodeValue = v.props.nodeValue;
+    }
+    return;
+  }
+  setProps(v.dom, old.props, v.props);
+  patchChildren(v.dom, old.children, v.children);
+}
+  </script>
+
+  <script type="text/x-source" id="lib-patch@6">
+// ── 4. reconciliation: მხოლოდ განსხვავება ──────
+function patch(parent, old, v) {
+  if (old.type !== v.type) {                // სხვა ტიპი → ვცვლით
+    parent.replaceChild(createDom(v), old.dom);
+    return;
+  }
+  if (typeof v.type === 'function') {       // კომპონენტი → მისი ხე
+    patch(parent, old.rendered, renderComponent(v, old));
+    v.dom = v.rendered.dom;
+    return;
+  }
+  v.dom = old.dom;                          // იგივე ტიპი → კვანძი რჩება
+  if (v.type === TEXT) {
+    if (old.props.nodeValue !== v.props.nodeValue) {
+      v.dom.nodeValue = v.props.nodeValue;
+    }
+    return;
+  }
+  setProps(v.dom, old.props, v.props);
+  patchChildren(v.dom, old.children, v.children);
+}
+  </script>
+
+  <script type="text/x-source" id="lib-children@5">
+function patchChildren(dom, oldKids, newKids) {
+  const n = Math.max(oldKids.length, newKids.length);
+  for (let i = 0; i < n; i++) {             // პოზიციით: 0↔0, 1↔1…
+    const old = oldKids[i];
+    const v = newKids[i];
+    if (!v) dom.removeChild(old.dom);
+    else if (!old) dom.appendChild(createDom(v));
+    else patch(dom, old, v);
+  }
+}
+  </script>
+
+  <script type="text/x-source" id="lib-children@7">
+function patchChildren(dom, oldKids, newKids) {
+  const byId = new Map();                   // id → ძველი შვილი
+  oldKids.forEach((c, i) => byId.set(idOf(c, i), c));
+  newKids.forEach((v, i) => {
+    const old = byId.get(idOf(v, i));
+    byId.delete(idOf(v, i));
+    if (old) patch(dom, old, v);            // ნაცნობი → შევადაროთ
+    else createDom(v);                      // ახალი → შევქმნათ
+  });
+  byId.forEach((c) => dom.removeChild(c.dom));   // ზედმეტი → წავშალოთ
+  newKids.forEach((v, i) => {               // და დავალაგოთ
+    if (dom.childNodes[i] !== v.dom) {
+      dom.insertBefore(v.dom, dom.childNodes[i] || null);
+    }
+  });
+}
+
+function idOf(c, i) {                       // key — ან პოზიცია
+  return c.key != null ? 'key:' + c.key : 'index:' + i;
+}
+  </script>
+
+  <script type="text/x-source" id="lib-hooks@6">
+// ── 5. hooks: state ინსტანსში ცხოვრობს ─────────
+let current = null;                         // ვინ სრულდება ახლა
+let queued = false;
+
+function useState(initial) {
+  const inst = current;
+  const i = inst.cursor++;                  // მასივი + რიგითი ნომერი
+  if (i >= inst.hooks.length) inst.hooks.push(initial);
+  const setState = (value) => {
+    const prev = inst.hooks[i];
+    inst.hooks[i] = typeof value === 'function' ? value(prev) : value;
+    if (queued) return;                     // რამდენიმე setState →
+    queued = true;                          // → ერთი render
+    queueMicrotask(() => { queued = false; rerender(); });
+  };
+  return [inst.hooks[i], setState];
+}
+  </script>
+
+  <!-- the apps the labs run, written in JSX and compiled by js/jsx.js -->
+  <script type="text/x-source" id="app-price">
+function Price({ value }) {
+  return <strong className="price">{'$' + value.toFixed(2)}</strong>;
+}
+  </script>
+
+  <script type="text/x-source" id="app-card-jsx">
+<li className="card">
+  <h3>{p.name}</h3>
+  <p className="row">
+    <Price value={p.price} />
+    <button onClick={() => add(p.id)}>Add</button>
+  </p>
+</li>
+  </script>
+
+  <script type="text/x-source" id="app-global">
+// state — ჩვეულებრივი ობიექტი; შეცვლის შემდეგ ვიძახებთ rerender()
+const state = { cart: 0, query: '' };
+
+function setState(patch) {
+  Object.assign(state, patch);
+  rerender();
+}
+
+function App() {
+  const q = state.query.toLowerCase();
+  const list = PRODUCTS.filter((p) => p.name.toLowerCase().includes(q));
+  return (
+    <div className="shop">
+      <Header cart={state.cart} />
+      <input className="search" placeholder="ძიება…" value={state.query}
+        onInput={(e) => setState({ query: e.target.value })} />
+      <ul className="grid">
+        {list.map((p) => (
+          <Card p={p} onAdd={() => setState({ cart: state.cart + 1 })} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Header({ cart }) {
+  return (
+    <header className="bar">
+      <b className="brand">Trattoria</b>
+      <span className="cart">Cart <i className="badge">{cart}</i></span>
+    </header>
+  );
+}
+
+function Card({ p, onAdd }) {
+  return (
+    <li className="card">
+      <div className="pizza" style={p.art}></div>
+      <h3>{p.name}</h3>
+      <p className="row">
+        <strong>{'$' + p.price.toFixed(2)}</strong>
+        <button onClick={onAdd}>Add</button>
+      </p>
+    </li>
+  );
+}
+  </script>
+
+  <script type="text/x-source" id="app-hooks">
+function App() {
+  const [cart, setCart] = useState(0);
+  const [query, setQuery] = useState('');
+  const q = query.toLowerCase();
+  const list = PRODUCTS.filter((p) => p.name.toLowerCase().includes(q));
+  const addThree = () => {
+    setCart((c) => c + 1);
+    setCart((c) => c + 1);
+    setCart((c) => c + 1);
+  };
+  return (
+    <div className="shop">
+      <Header cart={cart} onBulk={addThree} />
+      <input className="search" placeholder="ძიება…" value={query}
+        onInput={(e) => setQuery(e.target.value)} />
+      <ul className="grid">
+        {list.map((p) => <Card p={p} onAdd={(n) => setCart(cart + n)} />)}
+      </ul>
+    </div>
+  );
+}
+
+function Header({ cart, onBulk }) {
+  return (
+    <header className="bar">
+      <b className="brand">Trattoria</b>
+      <button className="bulk" onClick={onBulk}>+3</button>
+      <span className="cart">Cart <i className="badge">{cart}</i></span>
+    </header>
+  );
+}
+
+function Card({ p, onAdd }) {
+  const [qty, setQty] = useState(1);
+  return (
+    <li className="card">
+      <div className="pizza" style={p.art}></div>
+      <h3>{p.name}</h3>
+      <p className="row">
+        <span className="stepper">
+          <button onClick={() => setQty(Math.max(1, qty - 1))}>−</button>
+          <b>{qty}</b>
+          <button onClick={() => setQty(qty + 1)}>+</button>
+        </span>
+        <button onClick={() => onAdd(qty)}>Add</button>
+      </p>
+    </li>
+  );
+}
+  </script>
+
+  <script type="text/x-source" id="app-keys">
+function App() {
+  const [items, setItems] = useState(PRODUCTS.slice(0, 4));
+  return (
+    <div className="shop">
+      <div className="toolbar">
+        <button onClick={() => setItems(items.slice(1))}>წაშალე პირველი</button>
+        <button onClick={() => setItems([...items].reverse())}>შეაბრუნე</button>
+        <button onClick={() => setItems(PRODUCTS.slice(0, 4))}>თავიდან</button>
+      </div>
+      <ul className="rows">
+        {items.map((p) => <Row key={KEYS ? p.id : undefined} p={p} />)}
+      </ul>
+    </div>
+  );
+}
+
+function Row({ p }) {
+  const [liked, setLiked] = useState(false);
+  return (
+    <li className={liked ? 'row-item is-liked' : 'row-item'}>
+      <div className="pizza pizza--sm" style={p.art}></div>
+      <span className="name">{p.name}</span>
+      <button className="like" onClick={() => setLiked(!liked)}>
+        {liked ? 'მოწონებულია' : 'მოწონება'}
+      </button>
+    </li>
+  );
+}
+  </script>
+
+  <script type="text/x-source" id="app-full">
+// სრული აპი — ჩვენს React-ზე. შეცვალეთ და Ctrl + Enter.
+function App() {
+  const [cart, setCart] = useState([]);           // [{ id, qty }]
+  const [query, setQuery] = useState('');
+  const q = query.toLowerCase();
+  const list = PRODUCTS.filter((p) => p.name.toLowerCase().includes(q));
+  const count = cart.reduce((sum, x) => sum + x.qty, 0);
+
+  const add = (id, qty) => setCart((c) => {
+    const found = c.find((x) => x.id === id);
+    if (!found) return [...c, { id, qty }];
+    return c.map((x) => (x.id === id ? { ...x, qty: x.qty + qty } : x));
+  });
+  const remove = (id) => setCart((c) => c.filter((x) => x.id !== id));
+
+  return (
+    <div className="shop">
+      <Header count={count} />
+      <input className="search" placeholder="ძიება…" value={query}
+        onInput={(e) => setQuery(e.target.value)} />
+      <div className="layout">
+        <ul className="grid">
+          {list.map((p) => <Card key={p.id} p={p} onAdd={add} />)}
+        </ul>
+        <Cart items={cart} onRemove={remove} />
+      </div>
+    </div>
+  );
+}
+
+function Header({ count }) {
+  return (
+    <header className="bar">
+      <b className="brand">Trattoria</b>
+      <span className="cart">Cart <i className="badge">{count}</i></span>
+    </header>
+  );
+}
+
+function Card({ p, onAdd }) {
+  const [qty, setQty] = useState(1);
+  return (
+    <li className="card">
+      <div className="pizza" style={p.art}></div>
+      <h3>{p.name}</h3>
+      <div className="row">
+        <span className="stepper">
+          <button onClick={() => setQty(Math.max(1, qty - 1))}>−</button>
+          <b>{qty}</b>
+          <button onClick={() => setQty(qty + 1)}>+</button>
+        </span>
+        <button onClick={() => onAdd(p.id, qty)}>
+          {'Add · $' + (p.price * qty).toFixed(2)}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function Cart({ items, onRemove }) {
+  const total = items.reduce((sum, x) => sum + x.qty * byId(x.id).price, 0);
+  return (
+    <aside className="cart-box">
+      <h4>კალათა</h4>
+      {items.length === 0 ? <p className="empty">ჯერ ცარიელია</p> : null}
+      <ul>
+        {items.map((x) => (
+          <li key={x.id}>
+            <span>{x.qty + ' × ' + byId(x.id).name}</span>
+            <button onClick={() => onRemove(x.id)}>წაშლა</button>
+          </li>
+        ))}
+      </ul>
+      <p className="total">{'სულ: $' + total.toFixed(2)}</p>
+    </aside>
+  );
+}
+  </script>
+
+  <script src="js/core.js"></script>
+  <script src="js/highlight.js"></script>
+  <script src="js/jsx.js"></script>
+  <script src="js/diff.js"></script>
+  <script src="js/editor.js"></script>
+  <script src="js/lib.js"></script>
+  <script src="js/instrument.js"></script>
+  <script src="js/applab.js"></script>
+  <script src="js/chapters/c0-cover.js"></script>
+  <script src="js/chapters/c1-pain.js"></script>
+  <script src="js/chapters/c2-jsx.js"></script>
+  <script src="js/chapters/c3-render.js"></script>
+  <script src="js/chapters/c4-state.js"></script>
+  <script src="js/chapters/c5-patch.js"></script>
+  <script src="js/chapters/c6-hooks.js"></script>
+  <script src="js/chapters/c7-keys.js"></script>
+  <script src="js/chapters/c8-finale.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
